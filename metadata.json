@@ -1,0 +1,6 @@
+{
+  "name": "Study Buddy AI - Vector RAG & Folder Isolated Learning",
+  "description": "Intelligent Study Companion with isolated folder organization, high-precision Gemini Vector RAG, interactive AI Tutoring, and spaced recall quizzes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
