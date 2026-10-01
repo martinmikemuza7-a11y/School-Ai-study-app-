@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { Course, DocumentChunk, Folder, Material } from '../types';
+import { VectorSyncIndicator } from './VectorSyncIndicator';
 
 interface MaterialsViewProps {
   activeCourse: Course | null;
@@ -340,13 +341,21 @@ export const MaterialsView: React.FC<MaterialsViewProps> = ({
               </p>
             </div>
 
-            <button
-              onClick={() => setShowUploadModal(true)}
-              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-xs flex items-center gap-2 cursor-pointer transition"
-            >
-              <UploadCloud className="w-4 h-4" />
-              Upload Document
-            </button>
+            <div className="flex items-center gap-2.5">
+              <VectorSyncIndicator
+                activeCourse={activeCourse}
+                activeFolderId={activeFolderId}
+                folders={folders}
+              />
+
+              <button
+                onClick={() => setShowUploadModal(true)}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold shadow-xs flex items-center gap-2 cursor-pointer transition shrink-0"
+              >
+                <UploadCloud className="w-4 h-4" />
+                Upload Document
+              </button>
+            </div>
           </div>
 
           {/* Materials List */}

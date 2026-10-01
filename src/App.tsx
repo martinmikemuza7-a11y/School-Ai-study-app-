@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { DiagnosticsView } from './components/DiagnosticsView';
-import { Header } from './components/Header';
+import { Header, NavigationTab } from './components/Header';
 import { MaterialsView } from './components/MaterialsView';
+import { PastPapersView } from './components/PastPapersView';
 import { QuizView } from './components/QuizView';
 import { RagExplorerView } from './components/RagExplorerView';
+import { StudyPlannerView } from './components/StudyPlannerView';
 import { TutorView } from './components/TutorView';
 import { api, getActiveUserId, setActiveUserId } from './lib/api';
 import { Course, Folder, User } from './types';
@@ -15,8 +17,9 @@ export default function App() {
   const [activeCourse, setActiveCourse] = useState<Course | null>(null);
   const [folders, setFolders] = useState<Folder[]>([]);
   const [activeFolderId, setActiveFolderId] = useState<string | null | 'all'>('all');
-  const [activeTab, setActiveTab] = useState<'tutor' | 'materials' | 'rag' | 'quiz' | 'diagnostics'>('tutor');
+  const [activeTab, setActiveTab] = useState<NavigationTab>('tutor');
   const [isOnline, setIsOnline] = useState<boolean>(navigator.onLine);
+  const [initialPastPaperForExam, setInitialPastPaperForExam] = useState<string | null>(null);
 
   // Monitor network status
   useEffect(() => {
@@ -114,6 +117,11 @@ export default function App() {
     }
   };
 
+  const handleLaunchExamWithPaper = (paperId: string) => {
+    setInitialPastPaperForExam(paperId);
+    setActiveTab('study');
+  };
+
   return (
     <div className="min-h-screen bg-slate-100/70 text-slate-900 flex flex-col font-sans antialiased">
       <Header
@@ -155,20 +163,39 @@ export default function App() {
           />
         )}
 
+        {activeTab === 'past_papers' && (
+          <PastPapersView
+            activeCourse={activeCourse}
+            folders={folders}
+            activeFolderId={activeFolderId}
+            onSelectFolder={setActiveFolderId}
+            onLaunchExamWithPaper={handleLaunchExamWithPaper}
+          />
+        )}
+
+        {activeTab === 'study' && (
+          <QuizView
+            activeCourse={activeCourse}
+            folders={folders}
+            activeFolderId={activeFolderId}
+            initialPastPaperId={initialPastPaperForExam}
+          />
+        )}
+
+        {activeTab === 'calendar' && (
+          <StudyPlannerView
+            activeCourse={activeCourse}
+            courses={courses}
+            folders={folders}
+          />
+        )}
+
         {activeTab === 'rag' && (
           <RagExplorerView
             activeCourse={activeCourse}
             folders={folders}
             activeFolderId={activeFolderId}
             onSelectFolder={setActiveFolderId}
-          />
-        )}
-
-        {activeTab === 'quiz' && (
-          <QuizView
-            activeCourse={activeCourse}
-            folders={folders}
-            activeFolderId={activeFolderId}
           />
         )}
 

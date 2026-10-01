@@ -1,6 +1,33 @@
 import React, { useState } from 'react';
-import { BookOpen, Check, ChevronDown, Cpu, Folder, Layers, Plus, RefreshCw, Shield, Sparkles, User as UserIcon, Wifi, WifiOff } from 'lucide-react';
+import {
+  BookOpen,
+  Calendar,
+  Check,
+  ChevronDown,
+  Cpu,
+  FileText,
+  Folder,
+  Layers,
+  Plus,
+  RefreshCw,
+  Shield,
+  Sparkles,
+  Timer,
+  User as UserIcon,
+  Wifi,
+  WifiOff,
+} from 'lucide-react';
 import { Course, Folder as FolderType, User } from '../types';
+import { VectorSyncIndicator } from './VectorSyncIndicator';
+
+export type NavigationTab =
+  | 'tutor'
+  | 'materials'
+  | 'past_papers'
+  | 'study'
+  | 'calendar'
+  | 'rag'
+  | 'diagnostics';
 
 interface HeaderProps {
   currentUser: User | null;
@@ -14,8 +41,8 @@ interface HeaderProps {
   onSelectFolder: (folderId: string | null | 'all') => void;
   onCreateCourse: (data: { title: string; code: string; description: string; color: string }) => void;
   onCreateFolder: (name: string) => void;
-  activeTab: 'tutor' | 'materials' | 'rag' | 'quiz' | 'diagnostics';
-  onSelectTab: (tab: 'tutor' | 'materials' | 'rag' | 'quiz' | 'diagnostics') => void;
+  activeTab: NavigationTab;
+  onSelectTab: (tab: NavigationTab) => void;
   isOnline: boolean;
 }
 
@@ -86,11 +113,11 @@ export const Header: React.FC<HeaderProps> = ({
             <div className="flex items-center gap-2">
               <span className="font-bold text-lg text-slate-900 tracking-tight">Study Buddy AI</span>
               <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 font-semibold border border-indigo-200">
-                Vector RAG v2
+                Vector RAG
               </span>
             </div>
             <p className="text-xs text-slate-500 hidden sm:block">
-              Folder-Isolated Embeddings • Grounded Gemini 3.8 Tutor
+              Folder Isolation • Past Papers • Grounded AI Tutor
             </p>
           </div>
         </div>
@@ -98,166 +125,201 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Course & Folder Quick Selectors */}
         <div className="flex flex-wrap items-center gap-2">
           {/* Active Course Selector */}
-          <div className="flex items-center bg-slate-100 rounded-lg p-1 border border-slate-200 text-xs">
-            <span className="px-2 font-medium text-slate-500">Course:</span>
+          <div className="relative group">
             <select
+              aria-label="Select course"
               value={activeCourse?.id || ''}
               onChange={(e) => {
                 const selected = courses.find((c) => c.id === e.target.value);
                 if (selected) onSelectCourse(selected);
               }}
-              className="bg-white border-0 text-slate-800 font-semibold rounded px-2 py-1 shadow-2xs focus:ring-2 focus:ring-indigo-500 cursor-pointer max-w-[180px] truncate"
+              className="appearance-none bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-800 text-xs sm:text-sm font-semibold rounded-xl pl-3 pr-8 py-2 focus:outline-hidden focus:ring-2 focus:ring-indigo-500 cursor-pointer transition shadow-2xs"
             >
-              {courses.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.code} - {c.title}
+              {courses.map((course) => (
+                <option key={course.id} value={course.id}>
+                  {course.code} - {course.title}
                 </option>
               ))}
             </select>
-            <button
-              onClick={() => setShowCourseModal(true)}
-              title="Add Course"
-              className="ml-1 p-1 text-slate-600 hover:text-indigo-600 hover:bg-white rounded transition"
-            >
-              <Plus className="w-4 h-4" />
-            </button>
+            <ChevronDown className="w-4 h-4 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
           </div>
 
-          {/* Active Folder Selector (Quick Isolation switch) */}
-          <div className="flex items-center bg-slate-100 rounded-lg p-1 border border-slate-200 text-xs">
-            <span className="px-2 font-medium text-slate-500 flex items-center gap-1">
-              <Folder className="w-3.5 h-3.5 text-amber-600" />
-              Folder:
-            </span>
-            <select
-              value={activeFolderId === null ? 'null' : activeFolderId}
-              onChange={(e) => {
-                const val = e.target.value;
-                if (val === 'all') onSelectFolder('all');
-                else if (val === 'null') onSelectFolder(null);
-                else onSelectFolder(val);
-              }}
-              className="bg-white border-0 text-slate-800 font-semibold rounded px-2 py-1 shadow-2xs focus:ring-2 focus:ring-indigo-500 cursor-pointer max-w-[170px] truncate"
-            >
-              <option value="all">📂 All Folders</option>
-              <option value="null">📄 Root / Unassigned</option>
-              {folders.map((f) => (
-                <option key={f.id} value={f.id}>
-                  📁 {f.name}
-                </option>
-              ))}
-            </select>
+          <button
+            onClick={() => setShowCourseModal(true)}
+            title="Create new isolated course"
+            className="p-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 transition shadow-2xs"
+          >
+            <Plus className="w-4 h-4" />
+          </button>
+
+          {/* Active Folder Selector */}
+          {activeCourse && (
+            <div className="relative group">
+              <select
+                aria-label="Select folder"
+                value={activeFolderId === null ? 'null' : activeFolderId || 'all'}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  onSelectFolder(val === 'all' ? 'all' : val === 'null' ? null : val);
+                }}
+                className="appearance-none bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-800 text-xs sm:text-sm font-medium rounded-xl pl-3 pr-8 py-2 focus:outline-hidden focus:ring-2 focus:ring-indigo-500 cursor-pointer transition shadow-2xs"
+              >
+                <option value="all">📂 Scope: All Folders</option>
+                <option value="null">📁 Unassigned (Course Root)</option>
+                {folders.map((folder) => (
+                  <option key={folder.id} value={folder.id}>
+                    📁 {folder.name}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="w-4 h-4 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            </div>
+          )}
+
+          {activeCourse && (
             <button
               onClick={() => setShowFolderModal(true)}
-              title="Create Folder in this Course"
-              className="ml-1 p-1 text-slate-600 hover:text-amber-600 hover:bg-white rounded transition"
+              title="Create new folder in course"
+              className="p-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 transition shadow-2xs"
             >
-              <Plus className="w-4 h-4" />
+              <Folder className="w-4 h-4 text-indigo-600" />
             </button>
-          </div>
+          )}
+
+          {/* Real-time Vector Sync Progress Indicator */}
+          {activeCourse && (
+            <VectorSyncIndicator
+              activeCourse={activeCourse}
+              activeFolderId={activeFolderId}
+              folders={folders}
+              onNavigateToTab={onSelectTab}
+            />
+          )}
 
           {/* User Multi-Tenant Switcher */}
-          <div className="flex items-center bg-slate-100 rounded-lg p-1 border border-slate-200 text-xs">
-            <span className="px-2 font-medium text-slate-500 flex items-center gap-1">
-              <UserIcon className="w-3.5 h-3.5 text-slate-600" />
-              User:
-            </span>
+          <div className="relative group ml-1">
             <select
+              aria-label="Switch User Persona"
               value={currentUser?.id || ''}
               onChange={(e) => onSwitchUser(e.target.value)}
-              className="bg-white border-0 text-slate-800 font-semibold rounded px-2 py-1 shadow-2xs focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+              className="appearance-none bg-indigo-50/70 hover:bg-indigo-100/70 border border-indigo-200 text-indigo-900 text-xs sm:text-sm font-semibold rounded-xl pl-8 pr-8 py-2 focus:outline-hidden focus:ring-2 focus:ring-indigo-500 cursor-pointer transition shadow-2xs"
             >
               {availableUsers.map((u) => (
                 <option key={u.id} value={u.id}>
-                  {u.name}
+                  👤 {u.name} ({u.email.split('@')[0]})
                 </option>
               ))}
             </select>
+            <UserIcon className="w-4 h-4 text-indigo-600 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <ChevronDown className="w-4 h-4 text-indigo-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
           </div>
 
-          {/* Connectivity Status */}
+          {/* Network Status Badge */}
           <div
-            className={`flex items-center gap-1 text-xs px-2.5 py-1 rounded-full border font-medium ${
+            className={`hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-medium border ${
               isOnline
                 ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                 : 'bg-amber-50 text-amber-700 border-amber-200'
             }`}
-            title={isOnline ? 'Online: Live Vector RAG & Gemini active' : 'Offline: Local cache active'}
           >
             {isOnline ? <Wifi className="w-3.5 h-3.5" /> : <WifiOff className="w-3.5 h-3.5" />}
-            <span className="hidden sm:inline">{isOnline ? 'Online' : 'Offline Cache'}</span>
+            <span>{isOnline ? 'Online' : 'Offline Mode'}</span>
           </div>
         </div>
       </div>
 
-      {/* Navigation Tabs */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 border-t border-slate-100 flex items-center justify-between overflow-x-auto">
-        <nav className="flex space-x-1 sm:space-x-4 py-2">
+      {/* Navigation tabs */}
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 border-t border-slate-100 flex items-center justify-between overflow-x-auto no-scrollbar py-1">
+        <nav className="flex space-x-1 sm:space-x-2 py-1">
           <button
             onClick={() => onSelectTab('tutor')}
-            className={`px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition flex items-center gap-2 ${
+            className={`px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition flex items-center gap-1.5 cursor-pointer ${
               activeTab === 'tutor'
                 ? 'bg-indigo-600 text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
             }`}
           >
             <Sparkles className="w-4 h-4" />
-            AI Study Tutor
+            AI Tutor
           </button>
 
           <button
             onClick={() => onSelectTab('materials')}
-            className={`px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition flex items-center gap-2 ${
+            className={`px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition flex items-center gap-1.5 cursor-pointer ${
               activeTab === 'materials'
                 ? 'bg-indigo-600 text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
             }`}
           >
             <Folder className="w-4 h-4" />
-            Materials & Folders
+            Materials & Notes
+          </button>
+
+          <button
+            onClick={() => onSelectTab('past_papers')}
+            className={`px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition flex items-center gap-1.5 cursor-pointer ${
+              activeTab === 'past_papers'
+                ? 'bg-indigo-600 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            <FileText className="w-4 h-4" />
+            Past Papers
+          </button>
+
+          <button
+            onClick={() => onSelectTab('study')}
+            className={`px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition flex items-center gap-1.5 cursor-pointer ${
+              activeTab === 'study'
+                ? 'bg-indigo-600 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            <Cpu className="w-4 h-4" />
+            Exam Generator & Mock
+          </button>
+
+          <button
+            onClick={() => onSelectTab('calendar')}
+            className={`px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition flex items-center gap-1.5 cursor-pointer ${
+              activeTab === 'calendar'
+                ? 'bg-indigo-600 text-white shadow-xs'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+            }`}
+          >
+            <Calendar className="w-4 h-4" />
+            Study Calendar & Timer
           </button>
 
           <button
             onClick={() => onSelectTab('rag')}
-            className={`px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition flex items-center gap-2 ${
+            className={`px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition flex items-center gap-1.5 cursor-pointer ${
               activeTab === 'rag'
                 ? 'bg-indigo-600 text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
             }`}
           >
             <Layers className="w-4 h-4" />
-            Vector RAG Explorer
-          </button>
-
-          <button
-            onClick={() => onSelectTab('quiz')}
-            className={`px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition flex items-center gap-2 ${
-              activeTab === 'quiz'
-                ? 'bg-indigo-600 text-white shadow-xs'
-                : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-            }`}
-          >
-            <Cpu className="w-4 h-4" />
-            Active Recall Quiz
+            RAG Explorer
           </button>
 
           <button
             onClick={() => onSelectTab('diagnostics')}
-            className={`px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition flex items-center gap-2 ${
+            className={`px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition flex items-center gap-1.5 cursor-pointer ${
               activeTab === 'diagnostics'
                 ? 'bg-emerald-600 text-white shadow-xs'
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
             }`}
           >
             <Shield className="w-4 h-4" />
-            Architecture Diagnostics
+            Diagnostics
           </button>
         </nav>
 
         {/* Current Active Isolation Scope Banner */}
         <div className="hidden lg:flex items-center gap-2 text-xs text-slate-500 py-1 px-3 bg-slate-50 rounded-md border border-slate-200">
           <Shield className="w-3.5 h-3.5 text-indigo-600" />
-          <span>Active RAG Scope:</span>
+          <span>Active Scope:</span>
           <span className="font-semibold text-slate-800">
             {activeCourse?.code} • {activeFolderName}
           </span>
@@ -354,7 +416,7 @@ export const Header: React.FC<HeaderProps> = ({
                 <label className="block text-xs font-semibold text-slate-700 mb-1">Folder Name</label>
                 <input
                   type="text"
-                  placeholder="e.g. Chapter 3: Vector Spaces, or Week 2: Midterm Prep"
+                  placeholder="e.g. Week 1: Optimization Basics"
                   value={newFolderName}
                   onChange={(e) => setNewFolderName(e.target.value)}
                   className="w-full text-sm px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-indigo-500"

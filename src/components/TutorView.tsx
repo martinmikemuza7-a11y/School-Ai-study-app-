@@ -17,6 +17,7 @@ import {
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { Citation, Course, Folder, TutorMessage } from '../types';
+import { VectorSyncIndicator } from './VectorSyncIndicator';
 
 interface TutorViewProps {
   activeCourse: Course | null;
@@ -168,6 +169,13 @@ export const TutorView: React.FC<TutorViewProps> = ({
 
         {/* Tutor Style Selector & Action buttons */}
         <div className="flex items-center gap-2">
+          {/* Vector Sync Status Indicator */}
+          <VectorSyncIndicator
+            activeCourse={activeCourse}
+            activeFolderId={activeFolderId}
+            folders={folders}
+          />
+
           <div className="flex items-center bg-slate-100 rounded-lg p-1 text-xs">
             <span className="px-1.5 font-medium text-slate-500">Style:</span>
             <select

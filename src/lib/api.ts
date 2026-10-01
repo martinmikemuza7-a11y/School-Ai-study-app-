@@ -1,4 +1,17 @@
-import { Course, DocumentChunk, Folder, Material, QuizQuestion, TutorMessage, User, UserProgress } from '../types';
+import {
+  Course,
+  DocumentChunk,
+  Folder,
+  Material,
+  PastPaper,
+  QuizQuestion,
+  StudyCalendarEvent,
+  StudySessionLog,
+  TutorMessage,
+  User,
+  UserProgress,
+  VectorSyncStatus,
+} from '../types';
 
 let currentUserId = localStorage.getItem('study_buddy_user_id') || 'user_alex';
 
@@ -128,7 +141,7 @@ export const api = {
     });
   },
 
-  // Active Recall & Quiz
+  // Active Recall & Quiz / Exam Generation
   getCoverage: (courseId: string, folderId?: string | null | 'all') => {
     const folderParam = folderId === null ? 'root' : folderId || 'all';
     return request<{
@@ -139,15 +152,32 @@ export const api = {
       distinctDocumentsCount: number;
     }>(`/learning/coverage?courseId=${courseId}&folderId=${folderParam}`);
   },
+  getVectorSyncStatus: (courseId: string, folderId?: string | null | 'all') => {
+    const folderParam = folderId === null ? 'root' : folderId || 'all';
+    return request<VectorSyncStatus>(`/learning/vector-sync-status?courseId=${courseId}&folderId=${folderParam}`);
+  },
+  triggerVectorResync: (courseId: string, folderId?: string | null | 'all') => {
+    const folderParam = folderId === null ? 'root' : folderId || 'all';
+    return request<{ success: boolean; message: string; totalChunks: number; embeddedChunks: number }>(
+      '/learning/vector-resync',
+      {
+        method: 'POST',
+        body: JSON.stringify({ courseId, folderId: folderParam }),
+      }
+    );
+  },
   generateQuiz: (data: {
     courseId: string;
     courseIds?: string[];
     folderId?: string | null | 'all';
+    selectedDocumentIds?: string[];
+    pastPaperIds?: string[];
     questionCount?: number;
     difficulty?: string;
     questionTypes?: string[];
-    bloomFocus?: string;
+    questionStyle?: string;
     topic?: string;
+    isMockExam?: boolean;
   }) =>
     request<{
       questions: QuizQuestion[];
@@ -158,13 +188,43 @@ export const api = {
         distinctPages: number;
         totalChunksSampled: number;
       };
-    }>('/learning/generate-quiz', {
+    }>('/learning/generate-assessment', {
       method: 'POST',
       body: JSON.stringify(data),
     }),
   getProgress: (courseId: string) => request<{ progress: UserProgress }>(`/learning/progress?courseId=${courseId}`),
   recordQuizAnswer: (data: { courseId: string; isCorrect: boolean; topic?: string }) =>
     request<{ progress: UserProgress }>('/learning/progress', { method: 'POST', body: JSON.stringify(data) }),
+
+  // Past Papers
+  getPastPapers: (courseId: string, folderId?: string | null | 'all') => {
+    const folderParam = folderId === null ? 'root' : folderId || 'all';
+    return request<{ pastPapers: PastPaper[] }>(`/courses/${courseId}/past-papers?folderId=${folderParam}`);
+  },
+  uploadPastPaperFile: (courseId: string, folderId: string | null, file: File, title?: string) => {
+    const formData = new FormData();
+    if (folderId) formData.append('folderId', folderId);
+    if (title) formData.append('title', title);
+    formData.append('file', file);
+    return request<{ pastPaper: PastPaper }>(`/courses/${courseId}/past-papers/upload`, {
+      method: 'POST',
+      body: formData,
+    });
+  },
+  getPastPaper: (id: string) => request<{ pastPaper: PastPaper }>(`/past-papers/${id}`),
+  deletePastPaper: (id: string) => request<{ success: boolean; message: string }>(`/past-papers/${id}`, { method: 'DELETE' }),
+
+  // Study Calendar & Sessions
+  getCalendarEvents: () => request<{ events: StudyCalendarEvent[] }>('/calendar/events'),
+  createCalendarEvent: (data: Partial<StudyCalendarEvent>) =>
+    request<{ event: StudyCalendarEvent }>('/calendar/events', { method: 'POST', body: JSON.stringify(data) }),
+  updateCalendarEvent: (id: string, data: Partial<StudyCalendarEvent>) =>
+    request<{ event: StudyCalendarEvent }>(`/calendar/events/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteCalendarEvent: (id: string) =>
+    request<{ success: boolean }>(`/calendar/events/${id}`, { method: 'DELETE' }),
+  getStudyLogs: () => request<{ logs: StudySessionLog[] }>('/study/logs'),
+  logStudySession: (data: { courseId: string; folderId?: string | null; durationMinutes: number; notes?: string }) =>
+    request<{ log: StudySessionLog }>('/study/logs', { method: 'POST', body: JSON.stringify(data) }),
 
   // Verification Suite
   runDiagnostics: () =>

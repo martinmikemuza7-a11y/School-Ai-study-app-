@@ -1,6 +1,18 @@
 import fs from 'fs';
 import path from 'path';
-import { Course, DocumentChunk, Folder, Material, QuizQuestion, TutorMessage, User, UserProgress } from './types.js';
+import {
+  Course,
+  DocumentChunk,
+  Folder,
+  Material,
+  PastPaper,
+  QuizQuestion,
+  StudyCalendarEvent,
+  StudySessionLog,
+  TutorMessage,
+  User,
+  UserProgress,
+} from './types.js';
 
 interface DatabaseSchema {
   users: User[];
@@ -8,6 +20,9 @@ interface DatabaseSchema {
   folders: Folder[];
   materials: Material[];
   chunks: DocumentChunk[];
+  pastPapers: PastPaper[];
+  calendarEvents: StudyCalendarEvent[];
+  studyLogs: StudySessionLog[];
   progress: UserProgress[];
   tutorMessages: (TutorMessage & { courseId: string; folderId: string | null; ownerId: string })[];
 }
@@ -22,6 +37,9 @@ let db: DatabaseSchema = {
   folders: [],
   materials: [],
   chunks: [],
+  pastPapers: [],
+  calendarEvents: [],
+  studyLogs: [],
   progress: [],
   tutorMessages: [],
 };
@@ -63,6 +81,9 @@ export function initDb(forceReload = false) {
       if (forceReload || !isInitialized || stat.mtimeMs > lastLoadedMtime) {
         const raw = fs.readFileSync(DB_FILE, 'utf8');
         db = JSON.parse(raw);
+        if (!Array.isArray(db.pastPapers)) db.pastPapers = [];
+        if (!Array.isArray(db.calendarEvents)) db.calendarEvents = [];
+        if (!Array.isArray(db.studyLogs)) db.studyLogs = [];
         lastLoadedMtime = stat.mtimeMs;
         isInitialized = true;
       }
@@ -337,6 +358,9 @@ function seedDefaultData() {
         },
       },
     ],
+    pastPapers: [],
+    calendarEvents: [],
+    studyLogs: [],
     tutorMessages: [],
   };
 
@@ -627,6 +651,7 @@ export function updateChunkEmbedding(chunkId: string, embedding: number[]) {
   const c = db.chunks.find((chunk) => chunk.chunkId === chunkId);
   if (c) {
     c.embedding = embedding;
+    saveDbToDisk();
   }
 }
 
@@ -733,3 +758,88 @@ export function recordQuizAnswer(userId: string, courseId: string, isCorrect: bo
   saveDbToDisk();
   return p;
 }
+
+// ----------------- PAST PAPERS -----------------
+export function getPastPapers(courseId: string, folderId: string | null | 'all', ownerId: string): PastPaper[] {
+  initDb();
+  return db.pastPapers.filter((p) => {
+    if (p.ownerId !== ownerId || p.courseId !== courseId) return false;
+    if (folderId === 'all') return true;
+    return p.folderId === folderId;
+  });
+}
+
+export function getPastPaperById(id: string, ownerId: string): PastPaper | undefined {
+  initDb();
+  return db.pastPapers.find((p) => p.id === id && p.ownerId === ownerId);
+}
+
+export function addPastPaper(paper: PastPaper): void {
+  initDb();
+  db.pastPapers = db.pastPapers.filter((p) => p.id !== paper.id);
+  db.pastPapers.push(paper);
+  saveDbToDisk();
+}
+
+export function deletePastPaper(id: string, ownerId: string): boolean {
+  initDb();
+  const initialLen = db.pastPapers.length;
+  db.pastPapers = db.pastPapers.filter((p) => !(p.id === id && p.ownerId === ownerId));
+  if (db.pastPapers.length !== initialLen) {
+    saveDbToDisk();
+    return true;
+  }
+  return false;
+}
+
+// ----------------- STUDY CALENDAR & TIMERS -----------------
+export function getCalendarEvents(userId: string): StudyCalendarEvent[] {
+  initDb();
+  return (db.calendarEvents || []).filter((e) => e.userId === userId);
+}
+
+export function addCalendarEvent(event: StudyCalendarEvent): void {
+  initDb();
+  if (!db.calendarEvents) db.calendarEvents = [];
+  db.calendarEvents.push(event);
+  saveDbToDisk();
+}
+
+export function updateCalendarEvent(
+  id: string,
+  userId: string,
+  updates: Partial<StudyCalendarEvent>
+): StudyCalendarEvent | null {
+  initDb();
+  if (!db.calendarEvents) db.calendarEvents = [];
+  const event = db.calendarEvents.find((e) => e.id === id && e.userId === userId);
+  if (!event) return null;
+  Object.assign(event, updates);
+  saveDbToDisk();
+  return event;
+}
+
+export function deleteCalendarEvent(id: string, userId: string): boolean {
+  initDb();
+  if (!db.calendarEvents) return false;
+  const initialLen = db.calendarEvents.length;
+  db.calendarEvents = db.calendarEvents.filter((e) => !(e.id === id && e.userId === userId));
+  if (db.calendarEvents.length !== initialLen) {
+    saveDbToDisk();
+    return true;
+  }
+  return false;
+}
+
+export function getStudyLogs(userId: string): StudySessionLog[] {
+  initDb();
+  return (db.studyLogs || []).filter((s) => s.userId === userId);
+}
+
+export function addStudyLog(log: StudySessionLog): void {
+  initDb();
+  if (!db.studyLogs) db.studyLogs = [];
+  db.studyLogs.push(log);
+  saveDbToDisk();
+}
+

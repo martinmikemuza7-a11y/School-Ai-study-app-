@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { Course, DocumentChunk, Folder } from '../types';
+import { VectorSyncIndicator } from './VectorSyncIndicator';
 
 interface RagExplorerViewProps {
   activeCourse: Course | null;
@@ -90,9 +91,17 @@ export const RagExplorerView: React.FC<RagExplorerViewProps> = ({
             </p>
           </div>
 
-          <div className="flex items-center gap-2 bg-white/10 backdrop-blur-xs px-3 py-2 rounded-xl border border-white/10 text-xs">
-            <Shield className="w-4 h-4 text-emerald-400" />
-            <span>Isolation: <strong>{activeFolderName}</strong></span>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <VectorSyncIndicator
+              activeCourse={activeCourse}
+              activeFolderId={activeFolderId}
+              folders={folders}
+            />
+
+            <div className="flex items-center gap-2 bg-white/10 backdrop-blur-xs px-3 py-2 rounded-xl border border-white/10 text-xs">
+              <Shield className="w-4 h-4 text-emerald-400" />
+              <span>Isolation: <strong>{activeFolderName}</strong></span>
+            </div>
           </div>
         </div>
       </div>

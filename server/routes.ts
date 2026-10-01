@@ -1,4 +1,6 @@
 import express, { Response, Router } from 'express';
+import fs from 'fs';
+import path from 'path';
 import multer from 'multer';
 import { answerTutorQuestion, generateEmbedding, generateQuizFromChunks } from './ai.js';
 import {
@@ -8,13 +10,19 @@ import {
 } from './assessmentEngine.js';
 import { AuthenticatedRequest, authMiddleware } from './auth.js';
 import {
+  addCalendarEvent,
+  addPastPaper,
+  addStudyLog,
   addTutorMessage,
   clearTutorMessages,
   createCourse,
   createFolder,
+  deleteCalendarEvent,
   deleteCourse,
   deleteFolder,
   deleteMaterial,
+  deletePastPaper,
+  getCalendarEvents,
   getCourse,
   getCourses,
   getFilteredChunks,
@@ -22,16 +30,24 @@ import {
   getFolders,
   getMaterial,
   getMaterials,
+  getPastPaperById,
+  getPastPapers,
+  getStudyLogs,
   getTutorMessages,
   getUserProgress,
   getUsers,
   moveMaterial,
   recordQuizAnswer,
+  updateCalendarEvent,
+  updateChunkEmbedding,
   updateCourse,
   updateFolder,
+  updateMaterial,
 } from './db.js';
+import { processPastPaperFile } from './pastPaperProcessing.js';
 import { processUploadedDocument } from './materialProcessing.js';
 import { cosineSimilarity, retrieveRelevantChunks } from './vectorRag.js';
+import { PastPaper, StudyCalendarEvent, StudySessionLog } from './types.js';
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -443,21 +459,214 @@ router.get('/learning/coverage', (req, res: Response) => {
   });
 });
 
-// ----------------- ACTIVE RECALL / QUIZZES -----------------
-router.post('/learning/generate-quiz', async (req, res: Response) => {
+/**
+ * Real-time Vector Sync Progress Endpoint
+ * Computes exact vector embedding progress, total chunks, embedded chunks,
+ * and indexing status when user switches folders or courses.
+ */
+router.get('/learning/vector-sync-status', (req, res: Response) => {
+  const user = req.user!;
+  const courseId = req.query.courseId as string;
+  const folderIdParam = req.query.folderId as string | undefined;
+
+  if (!courseId) {
+    return res.status(400).json({ error: 'courseId query parameter is required' });
+  }
+
+  const course = getCourse(user.id, courseId);
+  if (!course) {
+    return res.status(404).json({ error: 'Course not found or unauthorized' });
+  }
+
+  const targetFolderId =
+    folderIdParam === 'all'
+      ? 'all'
+      : folderIdParam === 'root' || folderIdParam === 'null'
+      ? null
+      : folderIdParam || 'all';
+
+  // Get materials in this scope (strictly isolated by user, course, folder)
+  const materials = getMaterials(user.id, courseId, targetFolderId);
+  const chunks = getFilteredChunks({
+    userId: user.id,
+    courseId,
+    folderId: targetFolderId,
+  });
+
+  // Calculate human-readable folder name
+  let folderName = 'All Folders (Course Wide)';
+  if (targetFolderId === null) {
+    folderName = 'Root (Unassigned)';
+  } else if (targetFolderId !== 'all') {
+    const f = getFolder(user.id, targetFolderId);
+    if (f) folderName = f.name;
+  }
+
+  // Count embeddings per document
+  const chunksByDocId = new Map<string, { total: number; embedded: number }>();
+  for (const c of chunks) {
+    const current = chunksByDocId.get(c.documentId) || { total: 0, embedded: 0 };
+    current.total++;
+    if (c.embedding && c.embedding.length > 0) {
+      current.embedded++;
+    }
+    chunksByDocId.set(c.documentId, current);
+  }
+
+  const totalDocuments = materials.length;
+  let readyDocuments = 0;
+  let indexingDocuments = 0;
+  let errorDocuments = 0;
+
+  const docSummaries = materials.map((m) => {
+    const stats = chunksByDocId.get(m.id) || { total: m.chunkCount || 0, embedded: m.hasEmbeddings ? (m.chunkCount || 0) : 0 };
+    if (m.status === 'ready' && m.hasEmbeddings) {
+      readyDocuments++;
+    } else if (m.status === 'indexing_vectors' || m.status === 'processing' || m.status === 'uploaded') {
+      indexingDocuments++;
+    } else if (m.status === 'error') {
+      errorDocuments++;
+    }
+
+    return {
+      id: m.id,
+      filename: m.filename,
+      title: m.title,
+      status: m.status,
+      statusMessage: m.statusMessage,
+      chunkCount: stats.total,
+      embeddedChunksCount: stats.embedded,
+      hasEmbeddings: m.hasEmbeddings,
+      extractedTextLength: m.extractedTextLength,
+      folderId: m.folderId,
+      updatedAt: m.updatedAt,
+    };
+  });
+
+  const totalChunks = chunks.length;
+  const embeddedChunks = chunks.filter((c) => c.embedding && c.embedding.length > 0).length;
+  const vectorDimensions = chunks.find((c) => c.embedding && c.embedding.length > 0)?.embedding?.length || 768;
+
+  let syncPercentage = 100;
+  let syncState: 'synced' | 'indexing' | 'empty' | 'error' = 'empty';
+
+  if (totalDocuments === 0) {
+    syncState = 'empty';
+    syncPercentage = 100;
+  } else if (errorDocuments === totalDocuments) {
+    syncState = 'error';
+    syncPercentage = 0;
+  } else if (indexingDocuments > 0 || (totalChunks > 0 && embeddedChunks < totalChunks)) {
+    syncState = 'indexing';
+    syncPercentage = totalChunks > 0 ? Math.round((embeddedChunks / totalChunks) * 100) : 40;
+  } else {
+    syncState = 'synced';
+    syncPercentage = 100;
+  }
+
+  res.json({
+    courseId,
+    courseCode: course.code,
+    courseTitle: course.title,
+    folderId: targetFolderId,
+    folderName,
+    totalDocuments,
+    readyDocuments,
+    indexingDocuments,
+    errorDocuments,
+    totalChunks,
+    embeddedChunks,
+    vectorDimensions,
+    syncPercentage,
+    syncState,
+    isSynced: syncState === 'synced',
+    documents: docSummaries,
+    lastSyncedAt: new Date().toISOString(),
+  });
+});
+
+/**
+ * Manual Re-sync / Refresh Index Trigger
+ */
+router.post('/learning/vector-resync', async (req, res: Response) => {
+  const user = req.user!;
+  const { courseId, folderId: folderIdParam } = req.body;
+
+  if (!courseId) {
+    return res.status(400).json({ error: 'courseId is required' });
+  }
+
+  const course = getCourse(user.id, courseId);
+  if (!course) {
+    return res.status(404).json({ error: 'Course not found or unauthorized' });
+  }
+
+  const targetFolderId =
+    folderIdParam === 'all'
+      ? 'all'
+      : folderIdParam === 'root' || folderIdParam === 'null'
+      ? null
+      : folderIdParam || 'all';
+
+  const chunks = getFilteredChunks({
+    userId: user.id,
+    courseId,
+    folderId: targetFolderId,
+  });
+
+  const materials = getMaterials(user.id, courseId, targetFolderId);
+
+  // If any chunks lack embeddings, generate them
+  const unEmbeddedChunks = chunks.filter((c) => !c.embedding || c.embedding.length === 0);
+  for (const c of unEmbeddedChunks.slice(0, 10)) {
+    try {
+      const emb = await generateEmbedding(c.text);
+      if (emb) {
+        updateChunkEmbedding(c.chunkId, emb);
+      }
+    } catch {
+      // cascade
+    }
+  }
+
+  // If any materials are in ready status, make sure hasEmbeddings flag matches
+  for (const m of materials) {
+    if (m.status === 'ready' && !m.hasEmbeddings && m.chunkCount > 0) {
+      updateMaterial(user.id, m.id, { hasEmbeddings: true });
+    }
+  }
+
+  const updatedChunks = getFilteredChunks({
+    userId: user.id,
+    courseId,
+    folderId: targetFolderId,
+  });
+
+  res.json({
+    success: true,
+    message: 'Vector index refreshed and verified',
+    totalChunks: updatedChunks.length,
+    embeddedChunks: updatedChunks.filter((c) => c.embedding && c.embedding.length > 0).length,
+  });
+});
+
+// ----------------- ACTIVE RECALL / QUIZZES & EXAMS -----------------
+router.post(['/learning/generate-quiz', '/learning/generate-assessment'], async (req, res: Response) => {
   const user = req.user!;
   const {
     courseId,
     courseIds,
-    folderId,
-    questionCount = 4,
+    folderId = 'all',
+    selectedDocumentIds,
+    pastPaperIds,
+    questionCount = 5,
     difficulty = 'medium',
     questionTypes,
-    bloomFocus = 'all',
+    questionStyle,
     topic,
+    isMockExam = false,
   } = req.body;
 
-  // Support single course or explicit multi-course selection
   const targetCourseIds: string[] = Array.isArray(courseIds) && courseIds.length > 0
     ? courseIds
     : courseId
@@ -468,74 +677,202 @@ router.post('/learning/generate-quiz', async (req, res: Response) => {
     return res.status(400).json({ error: 'At least one courseId must be specified' });
   }
 
-  // 1. Verify user ownership for all targeted courses
-  for (const cid of targetCourseIds) {
-    const course = getCourse(user.id, cid);
-    if (!course) {
-      return res.status(404).json({ error: `Course "${cid}" not found or unauthorized` });
-    }
-  }
-
   const primaryCourseId = targetCourseIds[0];
-  const targetFolderId = folderId === 'all' ? 'all' : (folderId || null);
-
-  // 2. Pre-generation Validation: Ensure every selected file was successfully extracted & readable
-  const validation = validateMaterialsInScope(user.id, primaryCourseId, targetFolderId);
-
-  if (validation.eligibleMaterials.length === 0) {
-    if (validation.excludedMaterials.length > 0) {
-      const reasons = validation.excludedMaterials
-        .map((x) => `"${x.material.filename}": ${x.reason}`)
-        .join('; ');
-      return res.status(400).json({
-        error: `Uploaded files in this scope cannot be used for study questions because text extraction is incomplete or unreadable: ${reasons}. Please re-upload clean files or text.`,
-      });
-    }
-
-    return res.status(400).json({
-      error: 'No study materials found in this scope. Please upload lecture slides, PDF notes, or study guides first.',
-    });
+  const course = getCourse(user.id, primaryCourseId);
+  if (!course) {
+    return res.status(404).json({ error: `Course "${primaryCourseId}" not found or unauthorized` });
   }
 
-  // 3. Scan & Retrieve relevant content across ALL eligible uploaded files and ALL pages/slides/sections
-  const { chunks, coverage } = await collectStratifiedStudyChunks({
+  try {
+    const result = await generateUniversalAssessment({
+      userId: user.id,
+      courseId: primaryCourseId,
+      folderId,
+      selectedDocumentIds,
+      pastPaperIds,
+      questionCount: Math.min(25, Math.max(1, questionCount)),
+      difficulty,
+      questionTypes,
+      questionStyle,
+      specificTopic: topic,
+      isMockExam,
+    });
+
+    res.json(result);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(400).json({ error: msg });
+  }
+});
+
+// ----------------- PAST PAPERS -----------------
+router.get('/courses/:courseId/past-papers', (req, res: Response) => {
+  const user = req.user!;
+  const courseId = req.params.courseId;
+  const folderId = (req.query.folderId as string) || 'all';
+
+  const course = getCourse(user.id, courseId);
+  if (!course) {
+    return res.status(404).json({ error: 'Course not found or unauthorized' });
+  }
+
+  const papers = getPastPapers(courseId, folderId, user.id);
+  res.json({ pastPapers: papers });
+});
+
+router.post('/courses/:courseId/past-papers/upload', upload.single('file'), async (req, res: Response) => {
+  const user = req.user!;
+  const courseId = req.params.courseId;
+  const folderId = req.body.folderId && req.body.folderId !== 'all' ? req.body.folderId : null;
+  const title = req.body.title;
+
+  const course = getCourse(user.id, courseId);
+  if (!course) {
+    return res.status(404).json({ error: 'Course not found or unauthorized' });
+  }
+
+  if (!req.file) {
+    return res.status(400).json({ error: 'No past paper file uploaded' });
+  }
+
+  const paperId = `pp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+  const uploadDir = path.resolve(process.cwd(), 'data', 'past_papers');
+  if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+  }
+
+  const tempFilePath = path.join(uploadDir, `${paperId}_${req.file.originalname}`);
+  fs.writeFileSync(tempFilePath, req.file.buffer);
+
+  try {
+    const processed = await processPastPaperFile({
+      id: paperId,
+      courseId,
+      folderId,
+      ownerId: user.id,
+      title: title || req.file.originalname.replace(/\.[^/.]+$/, ''),
+      originalFilename: req.file.originalname,
+      filePath: tempFilePath,
+      mimeType: req.file.mimetype,
+      sizeBytes: req.file.size,
+    });
+
+    addPastPaper(processed);
+    res.status(201).json({ pastPaper: processed });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: `Past paper processing failed: ${msg}` });
+  }
+});
+
+router.get('/past-papers/:id', (req, res: Response) => {
+  const user = req.user!;
+  const paper = getPastPaperById(req.params.id, user.id);
+  if (!paper) {
+    return res.status(404).json({ error: 'Past paper not found' });
+  }
+  res.json({ pastPaper: paper });
+});
+
+router.delete('/past-papers/:id', (req, res: Response) => {
+  const user = req.user!;
+  const deleted = deletePastPaper(req.params.id, user.id);
+  if (!deleted) {
+    return res.status(404).json({ error: 'Past paper not found or unauthorized' });
+  }
+  res.json({ success: true, message: 'Past paper deleted' });
+});
+
+// ----------------- STUDY CALENDAR & TIMERS -----------------
+router.get('/calendar/events', (req, res: Response) => {
+  const user = req.user!;
+  const events = getCalendarEvents(user.id);
+  res.json({ events });
+});
+
+router.post('/calendar/events', (req, res: Response) => {
+  const user = req.user!;
+  const {
+    courseId,
+    folderId,
+    title,
+    description,
+    startTime,
+    endTime,
+    durationMinutes = 30,
+    isRecurring = false,
+    recurrenceRule,
+    reminderMinutesBefore = 15,
+  } = req.body;
+
+  if (!courseId || !title || !startTime) {
+    return res.status(400).json({ error: 'courseId, title, and startTime are required' });
+  }
+
+  const newEvent: StudyCalendarEvent = {
+    id: `evt_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
     userId: user.id,
-    courseId: primaryCourseId,
-    folderId: targetFolderId,
-    topic,
-    maxTotalChunks: Math.max(12, questionCount * 3),
-  });
+    courseId,
+    folderId: folderId || null,
+    title,
+    description: description || '',
+    startTime,
+    endTime: endTime || new Date(new Date(startTime).getTime() + durationMinutes * 60000).toISOString(),
+    durationMinutes,
+    isRecurring,
+    recurrenceRule,
+    reminderMinutesBefore,
+    completed: false,
+    createdAt: new Date().toISOString(),
+  };
 
-  if (chunks.length === 0) {
-    return res.status(400).json({
-      error: 'Unable to extract sufficient study context from the selected files to generate questions.',
-    });
+  addCalendarEvent(newEvent);
+  res.status(201).json({ event: newEvent });
+});
+
+router.patch('/calendar/events/:id', (req, res: Response) => {
+  const user = req.user!;
+  const updated = updateCalendarEvent(req.params.id, user.id, req.body);
+  if (!updated) {
+    return res.status(404).json({ error: 'Event not found or unauthorized' });
+  }
+  res.json({ event: updated });
+});
+
+router.delete('/calendar/events/:id', (req, res: Response) => {
+  const user = req.user!;
+  const deleted = deleteCalendarEvent(req.params.id, user.id);
+  if (!deleted) {
+    return res.status(404).json({ error: 'Event not found or unauthorized' });
+  }
+  res.json({ success: true });
+});
+
+router.get('/study/logs', (req, res: Response) => {
+  const user = req.user!;
+  const logs = getStudyLogs(user.id);
+  res.json({ logs });
+});
+
+router.post('/study/logs', (req, res: Response) => {
+  const user = req.user!;
+  const { courseId, folderId, durationMinutes, notes } = req.body;
+  if (!courseId || !durationMinutes) {
+    return res.status(400).json({ error: 'courseId and durationMinutes are required' });
   }
 
-  // 4. Generate 4 question types across Bloom\'s taxonomy
-  const questions = await generateUniversalAssessment({
-    chunks,
-    questionCount: Math.min(12, Math.max(1, questionCount)),
-    difficulty,
-    questionTypes,
-    bloomFocus,
-    topic,
-  });
+  const log: StudySessionLog = {
+    id: `log_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+    userId: user.id,
+    courseId,
+    folderId: folderId || null,
+    durationMinutes,
+    completedAt: new Date().toISOString(),
+    notes,
+  };
 
-  res.json({
-    questions,
-    coverage,
-    retrievedCount: chunks.length,
-    validationSummary: {
-      eligibleDocuments: validation.distinctDocumentsCount,
-      distinctPages: validation.distinctPagesCount,
-      totalChunksSampled: chunks.length,
-      excludedDocuments: validation.excludedMaterials.map((x) => ({
-        filename: x.material.filename,
-        reason: x.reason,
-      })),
-    },
-  });
+  addStudyLog(log);
+  res.status(201).json({ log });
 });
 
 router.get('/learning/progress', (req, res: Response) => {

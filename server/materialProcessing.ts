@@ -62,6 +62,20 @@ async function extractRawText(filename: string, mimeType: string, buffer: Buffer
     };
   }
 
+  if (mimeType.includes('word') || ext === 'docx') {
+    try {
+      const mammoth = await import('mammoth');
+      const res = await mammoth.extractRawText({ buffer });
+      const text = res.value || '';
+      return {
+        text,
+        pages: Math.max(1, Math.ceil(text.length / 2000)),
+      };
+    } catch (docxErr) {
+      console.warn('[Parser] mammoth DOCX extraction error:', docxErr);
+    }
+  }
+
   // Plain text, markdown, csv, json, code files
   const text = buffer.toString('utf8');
   // Approximate page count: 1 page per 2000 chars
